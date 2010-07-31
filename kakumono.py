@@ -24,6 +24,7 @@ class MainPage(webapp.RequestHandler):
     writs_query = Writ.all().order('-date')
     writs = writs_query.fetch(1)
 
+
     if len(writs) > 0:
       writ = writs[0]
     else:
@@ -54,6 +55,8 @@ class MainPage(webapp.RequestHandler):
 
 
 class Analyzer(webapp.RequestHandler):
+  minimumSearchStringLength = 2
+  largeResultCount = 100000
   def post(self):
     writ = Writ()
 
@@ -80,14 +83,20 @@ class Analyzer(webapp.RequestHandler):
 
   def getResultCountForSearch(self, searchQuery):
     searchQuery = searchQuery.encode('utf-8')
+
+    if len(searchQuery) < self.minimumSearchStringLength:
+      return self.largeResultCount
+
     quotedSearchQuery = urllib.quote_plus(searchQuery.center(len(searchQuery) + 2, '"'))
     url = 'http://ajax.googleapis.com/ajax/services/search/web?q='
     version = '&v=1.0'
     sizeLimit = '&rsz=1'
-    key = '' # '&key=MY-KEY'
-    userIP = '' # '&userip=192.168.0.1'
+    key = '&key=ABQIAAAA-5GDQ5g6YGJmHeKGA3_qhBQ6TI5qcCcRxibBuiMD3gySP-Cj9xSswhK8YnmUhjdg16rR1gtbe-UUhA'
+    userIP = '&userip=' + self.request.remote_addr
 
     requestUrl = url + quotedSearchQuery + version + sizeLimit + key + userIP
+    logging.info(requestUrl)
+
     try:
       request = urllib2.Request(requestUrl, None, {'Referer':self.request.uri})
       response = urllib2.urlopen(request)
