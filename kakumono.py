@@ -114,8 +114,19 @@ class Analyzer(webapp.RequestHandler):
     return results['responseData']['cursor']['estimatedResultCount']
 
   def busticate(self, content):
-    i = int(len(content) / 3)
-    return [content[:i], content[i:2*i], content[2*i:]]
+    maxLength = 10
+
+    # split into pieces based on "words":
+    pieces = content.split(' ')
+
+    # split according to maxLength:
+    for i in range(0, len(pieces)):
+      while len(pieces[i]) > maxLength:
+        halfway = int(len(pieces[i]) / 2)
+        pieces.insert(i + 1, pieces[i][halfway:])
+        pieces[i] = pieces[i][:halfway]
+
+    return pieces
 
   def getRankFromResultCount(self, count):
     rank = "soso"
