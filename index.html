@@ -1,0 +1,62 @@
+<!DOCTYPE html> 
+<html>
+  <head>
+    <title>something to write with</title> 
+    <link type="text/css" rel="stylesheet" href="/stylesheets/main.css" />
+    <link rel="shortcut icon" type="image/png" href="/static/favicon.png" /> 
+    <link rel='stylesheet' type='text/css' href='http://fonts.googleapis.com/css?family=Reenie+Beanie:regular' />
+  </head>
+  <body>
+    <!-- HEADER -->
+    <div class="header"> 
+      <!--a href="/"><img src="http://c0043312.cdn.cloudfiles.rackspacecloud.com/iwl/iwl.png" width="90" height="80" class="logo" alt="I Write Like"></a--> 
+      <h1><span class="kakumono">書く物</span><a href="/">something to write with</a></h1> 
+      <div class="menu"> 
+	<a href="/" class="active">Analyzer</a>
+	<a href="/scraps">Scraps</a> 
+	<a href="/blog">Blog</a>
+	<span class="user">{{ user }}</span>
+        <a href="{{ url }}">{{ url_linktext }}</a>
+      </div> 
+    </div>
+
+    <div class="content">
+      <!-- INTRODUCTION -->
+      <p><b>Kakumono means "writing thing" in Japanese.</b>
+      <p>This writing tool shows helps you find mistakes in things you wrote, in any language.
+      <p>Paste your text here:
+
+      <!-- TEXTBOX -->	
+      <form action="/analyze" method="post">
+        <div><textarea name="content" rows="3" cols="60"></textarea></div>
+        <div><input class="btn" type="submit" name="btn" value=" Analyze " /> <label for="btn" class="note">&larr; click this button to start analysis</label>
+      </form>
+
+      <!-- USER DETAILS --> 
+      </p>
+      <div><a href="{{ url }}">{{ url_linktext }}</a></div>
+      </p>
+
+      <p><b>Results of last entry:</b>
+      <div class="results">
+      <!-- RANKED RECENT ENTRY -->
+      {% for piece in pieces %} 
+	  <span class={{ piece.rank }}>
+	    {{ piece.content|escape }}
+	  </span>
+      {% endfor %}
+      </div>
+
+      {% for greeting in greetings %}
+        {% if greeting.author %}
+          <b>{{ greeting.author.nickname }}</b> wrote:
+        {% else %}
+         An anonymous person wrote:
+        {% endif %}
+        <blockqoute>{{ greeting.content|escape }}</blockquote>
+      {% endfor %}
+
+
+    </div>
+  </body>
+</html>
