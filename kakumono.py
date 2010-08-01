@@ -7,6 +7,7 @@ import urllib2
 import urllib
 
 from google.appengine.api import users
+from google.appengine.api import urlfetch
 from google.appengine.ext import webapp
 from google.appengine.ext.webapp.util import run_wsgi_app
 from google.appengine.ext import db
@@ -27,23 +28,11 @@ class Chunk(db.Model):
 class MainPage(webapp.RequestHandler):
   def get(self):
     writs_query = Writ.all().order('-date')
-    writs = writs_query.fetch(1)
+    writ = writs_query.get()
 
-
-    if len(writs) > 0:
-      writ = writs[0]
-    else:
-      writ = None
-
-    if users.get_current_user():
-      url = users.create_logout_url(self.request.uri)
-      url_linktext = 'Logout'
-    else:
-      url = users.create_login_url(self.request.uri)
-      url_linktext = 'Login'
+    url, url_linktext = self.handleLogin()
 
     pieces = []
-
     if writ is not None and writ.ranked_content is not None:
       pieces = json.loads(writ.ranked_content)
 
@@ -57,12 +46,23 @@ class MainPage(webapp.RequestHandler):
     path = os.path.join(os.path.dirname(__file__), 'index.html')
     self.response.out.write(template.render(path, template_values))
 
+  def handleLogin(self):
+    if users.get_current_user():
+      url = users.create_logout_url(self.request.uri)
+      url_linktext = 'Logout'
+    else:
+      url = users.create_login_url(self.request.uri)
+      url_linktext = 'Login'
+    return url, url_linktext
+
 
 
 # ANALYZER:
 class Analyzer(webapp.RequestHandler):
   minimumSearchStringLength = 2
   largeResultCount = 100000
+  fetchResults = {}
+
   def post(self):
     writ = Writ()
 
@@ -73,8 +73,24 @@ class Analyzer(webapp.RequestHandler):
     content = self.request.get('content')
     writ.content = content
 
+    # SPLIT INTO MAXSIZE CHUNKS AND DO FIRST PASS FETCHING ASYNCHRONOUSLY
+    content = content.encode('utf-8')
+    initialPieces = self.maxSizeSplit(content)
+    rpcs = []
+    for piece in initialPieces:
+      isCached, cacheValue = self.checkCache(piece)
+      if not isCached:
+        rpc = urlfetch.create_rpc()
+        rpc.callback = self.createCallback(rpc)
+        rpc.chunk = piece
+        urlfetch.make_fetch_call(rpc, self.getApiQueryUrl(piece))
+        rpcs.append(rpc)
+
+    for rpc in rpcs:
+      rpc.wait() # GET ALL THE FETCH RESULTS
+
+    # DONE WITH FIRST PASS (ALL TOP-LEVEL CHUNKS SHOULD NOW BE CACHED...). NOW FOR RECURSIVE SEARCH:
     checkedPieces = self.splitAndCheck(content)
-    logging.warning(checkedPieces)
     rankedPieces = []
     for i in range(0, len(checkedPieces)):
       rank = self.getRankFromGoodness(checkedPieces[i][1])
@@ -87,11 +103,30 @@ class Analyzer(webapp.RequestHandler):
     # Display results: (back to main page)
     self.redirect('/')
 
+  def maxSizeSplit(self, content):
+    maxLength = 20
+    if len(content) < maxLength:
+      return [content]
+
+    left, right = self.splitWithSpaceChecking(content)
+    return self.maxSizeSplit(left) + self.maxSizeSplit(right)
+    
+  def createCallback(self, rpc):
+    return lambda: self.handleResult(rpc)
+
+  def handleResult(self, rpc):
+    try:
+      result = rpc.get_result()
+      if result.status_code == 200:
+        text = json.loads(result.content)
+        self.parseAndCacheApiQueryResult(rpc.chunk, text)
+    except urlfetch.DownloadError, e:
+      logging.error('YIKES! Asynchronous fetch FAILED!')
+      logging.error(e)
+
   def splitAndCheck(self, piece):
     maxLength = 20
     cutoff = 2
-
-    logging.error("SPLITTING: " + piece)
 
     # SPLIT ON MAXIMUM LENGTH:
     if len(piece) > maxLength:
@@ -138,26 +173,12 @@ class Analyzer(webapp.RequestHandler):
     return ' '.join(pieces[:numberOfPieces]), ' '.join(pieces[numberOfPieces:])
 
   def getResultCountForSearch(self, searchQuery):
-    # USES GOOGLE SEARCH API TO GET NUMBER OF MATCHES FOR THIS searchQuery (quoted)
-    searchQuery = searchQuery.encode('utf-8')
-
-    if len(searchQuery) < self.minimumSearchStringLength:
-      # If the query is small enough, we can just assume it is going to be "correct" (think of a single kanji)
-      return self.largeResultCount
-
-    isCached, cacheValue = self.checkCache(searchQuery)
-
+    # CHECK IF ITS CACHED:
+    isCached, cacheValue = self.checkCache(searchQuery.encode('utf-8'))
     if isCached:
       return cacheValue
 
-    quotedSearchQuery = urllib.quote_plus(searchQuery.center(len(searchQuery) + 2, '"'))
-    url = 'http://ajax.googleapis.com/ajax/services/search/web?q='
-    version = '&v=1.0'
-    sizeLimit = '&rsz=1'
-    key = '&key=ABQIAAAA-5GDQ5g6YGJmHeKGA3_qhBQ6TI5qcCcRxibBuiMD3gySP-Cj9xSswhK8YnmUhjdg16rR1gtbe-UUhA'
-    userIP = '&userip=' + self.request.remote_addr
-
-    requestUrl = url + quotedSearchQuery + version + sizeLimit + key + userIP
+    requestUrl = self.getApiQueryUrl(searchQuery)
 
     try:
       request = urllib2.Request(requestUrl, None, {'Referer':self.request.uri})
@@ -168,17 +189,36 @@ class Analyzer(webapp.RequestHandler):
       logging.error('YIKES!')
       logging.error(results)
       logging.error(e)
-
-    if len(results['responseData']['results']) == 0:
-      # No matches
-      self.stickInCache(searchQuery, 0)
       return 0
 
-    ranking = int(results['responseData']['cursor']['estimatedResultCount'])
+    return self.parseAndCacheApiQueryResult(searchQuery, results)
 
-    self.stickInCache(searchQuery, ranking)
+  def parseAndCacheApiQueryResult(self, chunk, responseText):
+    if len(responseText['responseData']['results']) == 0:
+      # No matches
+      self.stickInCache(chunk, 0)
+      return 0
+
+    ranking = int(responseText['responseData']['cursor']['estimatedResultCount'])
+
+    self.stickInCache(chunk, ranking)
 
     return ranking
+
+  def getApiQueryUrl(self, searchQuery):
+    # USES GOOGLE SEARCH API TO GET NUMBER OF MATCHES FOR THIS searchQuery (quoted)
+    searchQuery = searchQuery.encode('utf-8')
+
+    # OTHERWISE MAKE API CALL:
+    quotedSearchQuery = urllib.quote_plus(searchQuery.center(len(searchQuery) + 2, '"'))
+    url = 'http://ajax.googleapis.com/ajax/services/search/web?q='
+    version = '&v=1.0'
+    sizeLimit = '&rsz=1'
+    key = '&key=ABQIAAAA-5GDQ5g6YGJmHeKGA3_qhBQ6TI5qcCcRxibBuiMD3gySP-Cj9xSswhK8YnmUhjdg16rR1gtbe-UUhA'
+    userIP = '&userip=' + self.request.remote_addr
+
+    return url + quotedSearchQuery + version + sizeLimit + key + userIP
+
 
   def getGoodness(self, piece, resultCount):
     # This is a heuristic measure of how "good" a piece is (currently based on length and number of search matches)
@@ -211,11 +251,16 @@ class Analyzer(webapp.RequestHandler):
 
   #CACHING:
   def checkCache(self, chunk):
+    if len(chunk) < self.minimumSearchStringLength:
+      # If the query is small enough, we can just assume it is going to be "correct" (think of a single kanji)
+      return True, self.largeResultCount
+
+    # CHECK DB CACHE:
     cachedChunks = db.GqlQuery("SELECT * FROM Chunk WHERE chunk = :1", chunk)
-    cachedChunk = cachedChunks.fetch(1)
-    if len(cachedChunk) == 0:
+    cachedChunk = cachedChunks.get()
+    if cachedChunk is None:
       return False, None
-    return True, cachedChunk[0].result_count
+    return True, cachedChunk.result_count
 
   def stickInCache(self, chunk, resultCount):
     chunk = Chunk(chunk=chunk)
