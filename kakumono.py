@@ -19,6 +19,11 @@ class Writ(db.Model):
   ranked_content = db.TextProperty()
   date = db.DateTimeProperty(auto_now_add=True)
 
+class Chunk(db.Model):
+  chunk = db.StringProperty(required=True, multiline=True)
+  result_count = db.IntegerProperty()
+  date = db.DateTimeProperty(auto_now_add=True)
+
 class MainPage(webapp.RequestHandler):
   def get(self):
     writs_query = Writ.all().order('-date')
@@ -54,7 +59,7 @@ class MainPage(webapp.RequestHandler):
 
 
 
-
+# ANALYZER:
 class Analyzer(webapp.RequestHandler):
   minimumSearchStringLength = 2
   largeResultCount = 100000
@@ -76,75 +81,74 @@ class Analyzer(webapp.RequestHandler):
       piece = checkedPieces[i][0]
       rankedPieces.append({'rank':rank, 'content':piece})
 
-    #contentPieces = self.busticate(content)
-    #rankedPieces = []
-    #for i in range(0, len(contentPieces)):
-      #count = self.getResultCountForSearch(contentPieces[i])
-      #r = self.getRankFromResultCount(count)
-      #rankedPieces.append({'rank':r, 'content':contentPieces[i]})
-
     writ.ranked_content = json.dumps(rankedPieces)
     writ.put()
-
 
     # Display results: (back to main page)
     self.redirect('/')
 
   def splitAndCheck(self, piece):
-    maxLength = 10
+    maxLength = 20
     cutoff = 2
 
+    logging.error("SPLITTING: " + piece)
+
+    # SPLIT ON MAXIMUM LENGTH:
     if len(piece) > maxLength:
       left, right = self.splitWithSpaceChecking(piece)
       return self.splitAndCheck(left) + self.splitAndCheck(right)
 
+    # RETURN IF CURRENT NODE IS GOOD ENOUGH:
     results = self.getResultCountForSearch(piece)
     if results > cutoff:
       goodness = self.getGoodness(piece, results)
       return [(piece, goodness)]
-    left, right = self.splitWithSpaceChecking(piece)
 
+    # OKAY, WE NEED TO LOOK AT THE CHILDREN:
+    left, right = self.splitWithSpaceChecking(piece)
     leftResults = self.getResultCountForSearch(left)
     rightResults = self.getResultCountForSearch(right)
 
     if leftResults > cutoff:
       if rightResults > cutoff:
-        combinedGoodness = self.getGoodness(left, leftResults) + self.getGoodness(right, rightResults)
+        # BOTH CHILDREN GOOD ENOUGH, PARENT IS THE PROBLEM!
+        combinedGoodness = min(self.getGoodness(left, leftResults), self.getGoodness(right, rightResults))
         return [(piece,combinedGoodness)]
+      # LEFT GOOD, BUT NEED TO EXPLORE RIGHT:
       leftGoodness = self.getGoodness(left, leftResults)
       return [(left,leftGoodness)] + self.splitAndCheck(right)
 
     if rightResults > cutoff:
+      # RIGHT GOOD, BUT NEED TO EXPLORE LEFT:
       rightGoodness = self.getGoodness(right, rightResults)
       return self.splitAndCheck(left) + [(right,rightGoodness)]
 
+    # NEED TO EXPLORE BOTH CHILDREN:
     return self.splitAndCheck(left) + self.splitAndCheck(right)
 
   def splitWithSpaceChecking(self, piece):
+    # We prefer to split on spaces if we can
+    # TODO: Punctuation too?
     halfway = int(len(piece) / 2)
     pieces = piece.split(' ')
     if len(pieces) == 1:
       # No spaces:
       return piece[:halfway], piece[halfway:]
-    x = int(len(pieces) / 2)
-    return ' '.join(pieces[:x]), ' '.join(pieces[x:])
-
-  def getRandomRanking(self, piece):
-    if len(piece) <= 3:
-      return 20
-    import random
-    num = random.randint(1, 10)
-    if num > 7:
-      return 20
-    return 1
-    
+    numberOfPieces = int(len(pieces) / 2)
+    return ' '.join(pieces[:numberOfPieces]), ' '.join(pieces[numberOfPieces:])
 
   def getResultCountForSearch(self, searchQuery):
-    cachedQuery = searchQuery
+    # USES GOOGLE SEARCH API TO GET NUMBER OF MATCHES FOR THIS searchQuery (quoted)
     searchQuery = searchQuery.encode('utf-8')
 
     if len(searchQuery) < self.minimumSearchStringLength:
+      # If the query is small enough, we can just assume it is going to be "correct" (think of a single kanji)
       return self.largeResultCount
+
+    isCached, cacheValue = self.checkCache(searchQuery)
+
+    if isCached:
+      return cacheValue
 
     quotedSearchQuery = urllib.quote_plus(searchQuery.center(len(searchQuery) + 2, '"'))
     url = 'http://ajax.googleapis.com/ajax/services/search/web?q='
@@ -154,13 +158,11 @@ class Analyzer(webapp.RequestHandler):
     userIP = '&userip=' + self.request.remote_addr
 
     requestUrl = url + quotedSearchQuery + version + sizeLimit + key + userIP
-    logging.info(requestUrl)
 
     try:
       request = urllib2.Request(requestUrl, None, {'Referer':self.request.uri})
       response = urllib2.urlopen(request)
       results = json.load(response)
-      #obj = json.loads( result )
       
     except urllib2.URLError, e:
       logging.error('YIKES!')
@@ -168,62 +170,68 @@ class Analyzer(webapp.RequestHandler):
       logging.error(e)
 
     if len(results['responseData']['results']) == 0:
+      # No matches
+      self.stickInCache(searchQuery, 0)
       return 0
 
-    
     ranking = int(results['responseData']['cursor']['estimatedResultCount'])
-    logging.error('ZAK: Got ranking of: ' + str(ranking) + ' for: ' + cachedQuery)
+
+    self.stickInCache(searchQuery, ranking)
+
     return ranking
 
   def getGoodness(self, piece, resultCount):
-    return self.getScaledRankFromResultCount(resultCount) * len(piece) * len(piece)
+    # This is a heuristic measure of how "good" a piece is (currently based on length and number of search matches)
+    return self.getScaledRankFromResultCount(resultCount) * (len(piece) * len(piece)) / 6
 
   def getScaledRankFromResultCount(self, resultCount):
     scaledRank = 0
-    if int(resultCount) >= 10:
+    if int(resultCount) >= 20:
       scaledRank = 1
-    if int(resultCount) >= 100:
+    if int(resultCount) >= 200:
       scaledRank = 2
-    if int(resultCount) > 1000:
+    if int(resultCount) > 2000:
       scaledRank = 3
-    if int(resultCount) > 10000:
+    if int(resultCount) > 20000:
       scaledRank = 4
     return scaledRank
 
-
   def getRankFromGoodness(self, goodness):
-    rank = "soso"
-    if int(goodness) >= 0:
-      rank = "bad"
-    if int(goodness) >= 5:
+    # FINALLY: Convert "goodness" into something that can be used in the css
+    rank = "bad"
+    if int(goodness) >= 4:
       rank = "dodgy"
-    if int(goodness) >= 10:
+    if int(goodness) >= 8:
       rank = "soso"
-    if int(goodness) > 50:
+    if int(goodness) > 16:
       rank = "okay"
-    if int(goodness) > 100:
+    if int(goodness) > 32:
       rank = "good"
     return rank
 
-  def busticate(self, content, maxLength=10):
-    # split into pieces based on "words":
-    pieces = content.split(' ')
+  #CACHING:
+  def checkCache(self, chunk):
+    cachedChunks = db.GqlQuery("SELECT * FROM Chunk WHERE chunk = :1", chunk)
+    cachedChunk = cachedChunks.fetch(1)
+    if len(cachedChunk) == 0:
+      return False, None
+    return True, cachedChunk[0].result_count
 
-    # split according to maxLength:
-    for i in range(0, len(pieces)):
-      while len(pieces[i]) > maxLength:
-        halfway = int(len(pieces[i]) / 2)
-        pieces.insert(i + 1, pieces[i][halfway:])
-        pieces[i] = pieces[i][:halfway]
+  def stickInCache(self, chunk, resultCount):
+    chunk = Chunk(chunk=chunk)
+    chunk.result_count = resultCount
+    chunk.put()
 
-    return pieces
 
-# START APPLICATION:
+
+# APPLICATION BITS:
+# Endpoint mappings
 application = webapp.WSGIApplication(
                                [('/', MainPage),
 				('/analyze', Analyzer)],
 			       debug=True)
 
+# Start application
 def main():
   run_wsgi_app(application)
 
