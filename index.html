@@ -41,22 +41,9 @@
       <div class="results">
       <!-- RANKED RECENT ENTRY -->
       {% for piece in pieces %} 
-	  <span class={{ piece.rank }}>
-	    {{ piece.content|escape }}
-	  </span>
+	  <span class={{ piece.rank }}>{{ piece.content|escape }}</span>
       {% endfor %}
       </div>
-
-      {% for greeting in greetings %}
-        {% if greeting.author %}
-          <b>{{ greeting.author.nickname }}</b> wrote:
-        {% else %}
-         An anonymous person wrote:
-        {% endif %}
-        <blockqoute>{{ greeting.content|escape }}</blockquote>
-      {% endfor %}
-
-
     </div>
   </body>
 </html>

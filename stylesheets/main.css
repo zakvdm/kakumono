@@ -37,7 +37,7 @@ hr {height:1px;border:0;color:#ccc;background:#ccc}
 img {border:0;}
 
 /* RANKINGS */
-.results { background: #f6fcf6; height: 200px; border: 1px solid #aaa; }
+.results { background: #d6ffd6; border: 0px solid #aaa; }
 .good { color: #222; font-size: 18px }
 .okay { color: #430; font-size: 18px }
 .soso { color: #960; font-size: 18px }

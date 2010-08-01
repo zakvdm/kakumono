@@ -54,6 +54,7 @@ class MainPage(webapp.RequestHandler):
 
 
 
+
 class Analyzer(webapp.RequestHandler):
   minimumSearchStringLength = 2
   largeResultCount = 100000
@@ -67,12 +68,20 @@ class Analyzer(webapp.RequestHandler):
     content = self.request.get('content')
     writ.content = content
 
-    contentPieces = self.busticate(content)
+    checkedPieces = self.splitAndCheck(content)
+    logging.warning(checkedPieces)
     rankedPieces = []
-    for i in range(0, len(contentPieces)):
-      count = self.getResultCountForSearch(contentPieces[i])
-      r = self.getRankFromResultCount(count)
-      rankedPieces.append({'rank':r, 'content':contentPieces[i]})
+    for i in range(0, len(checkedPieces)):
+      rank = self.getRankFromGoodness(checkedPieces[i][1])
+      piece = checkedPieces[i][0]
+      rankedPieces.append({'rank':rank, 'content':piece})
+
+    #contentPieces = self.busticate(content)
+    #rankedPieces = []
+    #for i in range(0, len(contentPieces)):
+      #count = self.getResultCountForSearch(contentPieces[i])
+      #r = self.getRankFromResultCount(count)
+      #rankedPieces.append({'rank':r, 'content':contentPieces[i]})
 
     writ.ranked_content = json.dumps(rankedPieces)
     writ.put()
@@ -81,7 +90,57 @@ class Analyzer(webapp.RequestHandler):
     # Display results: (back to main page)
     self.redirect('/')
 
+  def splitAndCheck(self, piece):
+    maxLength = 10
+    cutoff = 2
+
+    if len(piece) > maxLength:
+      left, right = self.splitWithSpaceChecking(piece)
+      return self.splitAndCheck(left) + self.splitAndCheck(right)
+
+    results = self.getResultCountForSearch(piece)
+    if results > cutoff:
+      goodness = self.getGoodness(piece, results)
+      return [(piece, goodness)]
+    left, right = self.splitWithSpaceChecking(piece)
+
+    leftResults = self.getResultCountForSearch(left)
+    rightResults = self.getResultCountForSearch(right)
+
+    if leftResults > cutoff:
+      if rightResults > cutoff:
+        combinedGoodness = self.getGoodness(left, leftResults) + self.getGoodness(right, rightResults)
+        return [(piece,combinedGoodness)]
+      leftGoodness = self.getGoodness(left, leftResults)
+      return [(left,leftGoodness)] + self.splitAndCheck(right)
+
+    if rightResults > cutoff:
+      rightGoodness = self.getGoodness(right, rightResults)
+      return self.splitAndCheck(left) + [(right,rightGoodness)]
+
+    return self.splitAndCheck(left) + self.splitAndCheck(right)
+
+  def splitWithSpaceChecking(self, piece):
+    halfway = int(len(piece) / 2)
+    pieces = piece.split(' ')
+    if len(pieces) == 1:
+      # No spaces:
+      return piece[:halfway], piece[halfway:]
+    x = int(len(pieces) / 2)
+    return ' '.join(pieces[:x]), ' '.join(pieces[x:])
+
+  def getRandomRanking(self, piece):
+    if len(piece) <= 3:
+      return 20
+    import random
+    num = random.randint(1, 10)
+    if num > 7:
+      return 20
+    return 1
+    
+
   def getResultCountForSearch(self, searchQuery):
+    cachedQuery = searchQuery
     searchQuery = searchQuery.encode('utf-8')
 
     if len(searchQuery) < self.minimumSearchStringLength:
@@ -109,13 +168,44 @@ class Analyzer(webapp.RequestHandler):
       logging.error(e)
 
     if len(results['responseData']['results']) == 0:
-      return "0"
+      return 0
 
-    return results['responseData']['cursor']['estimatedResultCount']
+    
+    ranking = int(results['responseData']['cursor']['estimatedResultCount'])
+    logging.error('ZAK: Got ranking of: ' + str(ranking) + ' for: ' + cachedQuery)
+    return ranking
 
-  def busticate(self, content):
-    maxLength = 10
+  def getGoodness(self, piece, resultCount):
+    return self.getScaledRankFromResultCount(resultCount) * len(piece) * len(piece)
 
+  def getScaledRankFromResultCount(self, resultCount):
+    scaledRank = 0
+    if int(resultCount) >= 10:
+      scaledRank = 1
+    if int(resultCount) >= 100:
+      scaledRank = 2
+    if int(resultCount) > 1000:
+      scaledRank = 3
+    if int(resultCount) > 10000:
+      scaledRank = 4
+    return scaledRank
+
+
+  def getRankFromGoodness(self, goodness):
+    rank = "soso"
+    if int(goodness) >= 0:
+      rank = "bad"
+    if int(goodness) >= 5:
+      rank = "dodgy"
+    if int(goodness) >= 10:
+      rank = "soso"
+    if int(goodness) > 50:
+      rank = "okay"
+    if int(goodness) > 100:
+      rank = "good"
+    return rank
+
+  def busticate(self, content, maxLength=10):
     # split into pieces based on "words":
     pieces = content.split(' ')
 
@@ -127,22 +217,6 @@ class Analyzer(webapp.RequestHandler):
         pieces[i] = pieces[i][:halfway]
 
     return pieces
-
-  def getRankFromResultCount(self, count):
-    rank = "soso"
-    if int(count) >= 0:
-      rank = "bad"
-    if int(count) >= 5:
-      rank = "dodgy"
-    if int(count) >= 10:
-      rank = "soso"
-    if int(count) > 100:
-      rank = "okay"
-    if int(count) > 1000:
-      rank = "good"
-    return rank
-
-
 
 # START APPLICATION:
 application = webapp.WSGIApplication(
