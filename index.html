@@ -5,6 +5,8 @@
     <link type="text/css" rel="stylesheet" href="/stylesheets/main.css" />
     <link rel="shortcut icon" type="image/png" href="/static/favicon.png" /> 
     <link rel='stylesheet' type='text/css' href='http://fonts.googleapis.com/css?family=Reenie+Beanie:regular' />
+	<script type="text/javascript" src="/javascript/jquery-1.4.2.js"></script>
+	<script type="text/javascript" src="/javascript/kakumonster.js"></script>
   </head>
   <body>
     <!-- HEADER -->
@@ -26,6 +28,14 @@
       <p>This writing tool shows helps you find mistakes in things you wrote, in any language.
       <p>Paste your text here:
 
+	  <!-- KAKUMONSTER -->
+	  <a class="btn" id="askKakumonster"><em>ask Kakumonster!</em></a>
+	  <div id="kakumonster">
+	    <div class="mistakes"></div>
+	    <div class="maybes"></div>
+		<a class="btn" id="fix">fix it</a> <a class="btn" id="reject">nope, this is okay</a>
+	  </div>
+
       <!-- TEXTBOX -->	
       <form action="/analyze" method="post">
         <div><textarea name="content" rows="3" cols="60"></textarea></div>
@@ -33,11 +43,9 @@
       </form>
 
       <!-- USER DETAILS --> 
-      </p>
       <div><a href="{{ url }}">{{ url_linktext }}</a></div>
-      </p>
 
-      <p><b>Results of last entry:</b>
+      <p><b>Results of last entry:</b></p>
       <div class="results">
       <!-- RANKED RECENT ENTRY -->
       {% for piece in pieces %} 

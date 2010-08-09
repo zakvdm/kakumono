@@ -1,6 +1,5 @@
 body { margin: 0; border-top: 2px solid #222; font: 14px/1.6 Georgia, Times, serif;}
 h1 {
-  /*font-family: 'Reenie Beanie', Georgia, serif;*/
   font-family: 'Reenie Beanie', serif;
   font-style: normal;
   font-weight: 400;
@@ -35,6 +34,13 @@ input.btn:active { border-left-color: #000; border-top-color: #000; background: 
 .note { font-size: 11px; color: #888; line-height: 1.2; margin-left: 10px;}
 hr {height:1px;border:0;color:#ccc;background:#ccc}
 img {border:0;}
+
+/* KAKUMONSTER */
+a.btn { font: 16px "Helvetica Neue", arial, sans-serif; background: #ddd; border: 2px solid #ccc; width:150px; margin-left: 420px; }
+a.btn:hover { cursor: pointer }
+#kakumonster { background: #ddd; border:1px solid #aaa; text-align:center; }
+#kakumonster .maybes { background: #eee; }
+#kakumonster .btn { margin-left: 0px; border: 1px solid #888; background: #999; }
 
 /* RANKINGS */
 .results { background: #d6ffd6; border: 0px solid #aaa; }

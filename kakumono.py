@@ -6,6 +6,8 @@ import cgi
 import urllib2
 import urllib
 
+import kakumonster
+
 from google.appengine.api import users
 from google.appengine.api import urlfetch
 from google.appengine.ext import webapp
@@ -273,8 +275,9 @@ class Analyzer(webapp.RequestHandler):
 # Endpoint mappings
 application = webapp.WSGIApplication(
                                [('/', MainPage),
-				('/analyze', Analyzer)],
-			       debug=True)
+                                ('/analyze', Analyzer),
+                                ('/kakumonster.*',kakumonster.KakumonsterHandler)],
+                               debug=True)
 
 # Start application
 def main():
